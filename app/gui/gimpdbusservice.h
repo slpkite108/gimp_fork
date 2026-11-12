@@ -27,10 +27,10 @@
 /* service name and path should really be org.gimp.GIMP and
  * /org/gimp/GIMP and only the interface be called UI.
  */
-#define GIMP_DBUS_SERVICE_NAME   "org.gimp.GIMP.UI"
-#define GIMP_DBUS_SERVICE_PATH   "/org/gimp/GIMP/UI"
+#define GIMP_DBUS_SERVICE_NAME   "org.gimp.ProgressiveFork.UI"
+#define GIMP_DBUS_SERVICE_PATH   "/org/gimp/ProgressiveFork/UI"
 #define GIMP_DBUS_INTERFACE_NAME "org.gimp.GIMP.UI"
-#define GIMP_DBUS_INTERFACE_PATH "/org/gimp/GIMP/UI"
+#define GIMP_DBUS_INTERFACE_PATH "/org/gimp/ProgressiveFork/UI"
 
 
 #define GIMP_TYPE_DBUS_SERVICE            (gimp_dbus_service_get_type ())
