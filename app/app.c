@@ -85,6 +85,7 @@
 
 /*  local prototypes  */
 
+static void       app_startup_profile_mark    (const gchar        *stage);
 static void       app_init_update_noop       (const gchar        *text1,
                                               const gchar        *text2,
                                               gdouble             percentage);
@@ -109,6 +110,12 @@ static void       app_quit_on_ctrl_c         (gint                sig_num);
 /*  left here as documentation how to do compat enums  */
 GType gimp_convert_dither_type_compat_get_type (void); /* compat cruft */
 #endif
+
+
+/* Optional diagnostics: enable with GIMP_STARTUP_PROFILE=1. */
+static gboolean startup_profile_enabled  = FALSE;
+static gint64   startup_profile_start_us = 0;
+static gint64   startup_profile_last_us  = 0;
 
 
 /*  public functions  */
@@ -208,6 +215,15 @@ app_run (const gchar         *full_prog_name,
   const gchar        *abort_message  = NULL;
   gint                retval         = EXIT_SUCCESS;
 
+  startup_profile_enabled =
+    g_strcmp0 (g_getenv ("GIMP_STARTUP_PROFILE"), "1") == 0;
+  if (startup_profile_enabled)
+    {
+      startup_profile_start_us = g_get_monotonic_time ();
+      startup_profile_last_us  = startup_profile_start_us;
+      app_startup_profile_mark ("app_run_enter");
+    }
+
   if (filenames && filenames[0] && ! filenames[1] &&
       g_file_test (filenames[0], G_FILE_TEST_IS_DIR))
     {
@@ -247,6 +263,7 @@ app_run (const gchar         *full_prog_name,
                    pdb_compat_mode);
 
   g_clear_object (&default_folder);
+  app_startup_profile_mark ("gimp_new_completed");
 
 #ifndef GIMP_CONSOLE_COMPILATION
   if (no_interface)
@@ -289,6 +306,7 @@ app_run (const gchar         *full_prog_name,
   g_object_unref (gimpdir);
 
   gimp_load_config (gimp, alternate_system_gimprc, alternate_gimprc);
+  app_startup_profile_mark ("config_loaded");
 
   /* Initialize the error handling after creating/migrating the config
    * directory because it will create some folders for backup and crash
@@ -312,6 +330,7 @@ app_run (const gchar         *full_prog_name,
 
   /*  initialize lowlevel stuff  */
   gimp_gegl_init (gimp);
+  app_startup_profile_mark ("gegl_initialized");
 
   g_signal_connect_after (gimp, "exit",
                           G_CALLBACK (app_exit_after_callback),
@@ -348,6 +367,29 @@ app_run (const gchar         *full_prog_name,
 
 
 /*  private functions  */
+
+/* Elapsed time is relative to app_run(), not to OS process creation.
+ * This intentionally does not affect startup unless explicitly enabled.
+ * CSV fields: marker, elapsed_us, delta_us.
+ */
+static void
+app_startup_profile_mark (const gchar *stage)
+{
+  gint64 now;
+
+  if (! startup_profile_enabled)
+    return;
+
+  now = g_get_monotonic_time ();
+
+  g_printerr ("GIMP_STARTUP_PROFILE,%s,%" G_GINT64_FORMAT
+              ",%" G_GINT64_FORMAT "\n",
+              stage,
+              now - startup_profile_start_us,
+              now - startup_profile_last_us);
+
+  startup_profile_last_us = now;
+}
 
 static void
 app_init_update_noop (const gchar *text1,
@@ -387,6 +429,7 @@ app_activate_callback (GimpCoreApp *app,
   g_return_if_fail (GIMP_IS_CORE_APP (app));
 
   gimp = gimp_core_app_get_gimp (app);
+  app_startup_profile_mark ("activate_enter");
 
   gimp_core_app_set_exit_status (app, EXIT_SUCCESS);
 
@@ -401,6 +444,8 @@ app_activate_callback (GimpCoreApp *app,
                                    GIMP_APP (app), NULL, system_lang_l10n);
 #endif
 
+  app_startup_profile_mark ("gui_initialized");
+
   if (! update_status_func)
     update_status_func = app_init_update_noop;
 
@@ -408,6 +453,7 @@ app_activate_callback (GimpCoreApp *app,
    *  parsed gimprc, e.g. the data factories
    */
   gimp_initialize (gimp, update_status_func);
+  app_startup_profile_mark ("core_initialized");
 
 #ifdef PLATFORM_OSX
   /* macOS freezes [[NSBundle mainBundle] preferredLocalizations] before main(),
@@ -427,6 +473,7 @@ app_activate_callback (GimpCoreApp *app,
 
   /*  Load all data files */
   gimp_restore (gimp, update_status_func, &font_error);
+  app_startup_profile_mark ("resources_restored");
 
   /*  enable autosave late so we don't autosave when the
    *  monitor resolution is set in gui_init()
@@ -520,10 +567,13 @@ app_activate_callback (GimpCoreApp *app,
         }
     }
 
+  app_startup_profile_mark ("command_line_images_opened");
+
   /* The software is now fully loaded and ready to be used and get
    * external input.
    */
   gimp->initialized = TRUE;
+  app_startup_profile_mark ("initialized");
 
   if (font_error)
     {
