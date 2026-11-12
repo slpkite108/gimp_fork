@@ -1,0 +1,18 @@
+name: Fork isolation guardrails
+
+on:
+  push:
+    branches:
+      - feature/progressive-startup
+  pull_request:
+
+jobs:
+  verify-isolation:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out GIMP fork
+        uses: actions/checkout@v4
+      - name: Verify fork-only profile and IPC namespaces
+        run: python3 tools/test-progressive-isolation.py
