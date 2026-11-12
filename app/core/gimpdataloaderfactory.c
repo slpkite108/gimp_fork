@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <gio/gio.h>
 #include <gegl.h>
 
 #include "libgimpbase/gimpbase.h"
@@ -55,10 +56,23 @@ struct _GimpDataLoader
 };
 
 
+/* A single directory enumerator stays open between cooperative steps.
+ * Children are pushed to the head so traversal remains depth-first, just
+ * like gimp_data_loader_factory_load_directory().
+ */
+typedef struct
+{
+  GFile           *directory;
+  GFile           *top_directory;
+  GFileEnumerator *enumerator;
+  gboolean         writable;
+} GimpIncrementalDirectory;
+
 struct _GimpDataLoaderFactoryPrivate
 {
   GList          *loaders;
   GimpDataLoader *fallback;
+  GQueue         *incremental_dirs;
 };
 
 #define GET_PRIVATE(obj) (((GimpDataLoaderFactory *) (obj))->priv)
@@ -128,6 +142,8 @@ gimp_data_loader_factory_finalize (GObject *object)
 {
   GimpDataLoaderFactoryPrivate *priv = GET_PRIVATE (object);
 
+  gimp_data_loader_factory_incremental_cancel (GIMP_DATA_FACTORY (object));
+
   g_list_free_full (priv->loaders, (GDestroyNotify) gimp_data_loader_free);
   priv->loaders = NULL;
 
@@ -187,6 +203,12 @@ gimp_data_loader_factory_data_refresh (GimpDataFactory *factory,
                                        GimpContext     *context)
 {
   GimpContainer *container = gimp_data_factory_get_container (factory);
+
+  /* An explicit refresh (e.g. resource-path modification) replaces
+   * progressive enumeration; do not keep stale enumerators or duplicate
+   * the objects added by a full refresh.
+   */
+  gimp_data_loader_factory_incremental_cancel (factory);
   GHashTable    *cache;
 
   gimp_container_freeze (container);
@@ -287,6 +309,197 @@ gimp_data_loader_factory_add_fallback (GimpDataFactory  *factory,
   g_clear_pointer (&priv->fallback, gimp_data_loader_free);
 
   priv->fallback = gimp_data_loader_new (name, load_func, NULL, FALSE);
+}
+
+
+/*  cooperative resource loading  */
+
+/* These functions deliberately stay on the GLib main context. Resource
+ * loader callbacks, GimpContainer and signals are not thread-safe.
+ */
+static GimpIncrementalDirectory *
+gimp_incremental_directory_new (GFile    *directory,
+                                GFile    *top_directory,
+                                gboolean  writable)
+{
+  GimpIncrementalDirectory *dir = g_new0 (GimpIncrementalDirectory, 1);
+
+  dir->directory     = g_object_ref (directory);
+  dir->top_directory = g_object_ref (top_directory);
+  dir->writable      = writable;
+
+  return dir;
+}
+
+static void
+gimp_incremental_directory_free (gpointer data)
+{
+  GimpIncrementalDirectory *dir = data;
+
+  if (dir->enumerator)
+    {
+      g_file_enumerator_close (dir->enumerator, NULL, NULL);
+      g_object_unref (dir->enumerator);
+    }
+
+  g_clear_object (&dir->directory);
+  g_clear_object (&dir->top_directory);
+  g_free (dir);
+}
+
+void
+gimp_data_loader_factory_incremental_cancel (GimpDataFactory *factory)
+{
+  GimpDataLoaderFactoryPrivate *priv;
+
+  g_return_if_fail (GIMP_IS_DATA_LOADER_FACTORY (factory));
+
+  priv = GET_PRIVATE (factory);
+  if (! priv->incremental_dirs)
+    return;
+
+  g_queue_free_full (priv->incremental_dirs,
+                     gimp_incremental_directory_free);
+  priv->incremental_dirs = NULL;
+}
+
+void
+gimp_data_loader_factory_incremental_begin (GimpDataFactory *factory)
+{
+  GimpDataLoaderFactoryPrivate *priv;
+  const GList                  *ext_path;
+  GList                        *path;
+  GList                        *writable_path;
+  GList                        *iter;
+
+  g_return_if_fail (GIMP_IS_DATA_LOADER_FACTORY (factory));
+
+  priv = GET_PRIVATE (factory);
+  if (priv->incremental_dirs)
+    return;
+
+  priv->incremental_dirs = g_queue_new ();
+
+  /* Preserve the original extension-first, then user/system-path
+   * traversal. Factory initialization has already installed fallback
+   * objects and path-notification handlers; avoid a second data_init().
+   */
+  path          = gimp_data_factory_get_data_path          (factory);
+  writable_path = gimp_data_factory_get_data_path_writable (factory);
+  ext_path      = gimp_data_factory_get_data_path_ext      (factory);
+
+  for (iter = (GList *) ext_path; iter; iter = g_list_next (iter))
+    {
+      GFile *dir = iter->data;
+
+      g_queue_push_tail (priv->incremental_dirs,
+                         gimp_incremental_directory_new (dir, dir, FALSE));
+    }
+
+  for (iter = path; iter; iter = g_list_next (iter))
+    {
+      GFile    *dir = iter->data;
+      gboolean writable;
+
+      writable = g_list_find_custom (writable_path, dir,
+                                     (GCompareFunc) gimp_file_compare) != NULL;
+      g_queue_push_tail (priv->incremental_dirs,
+                         gimp_incremental_directory_new (dir, dir, writable));
+    }
+
+  g_list_free_full (path, (GDestroyNotify) g_object_unref);
+  g_list_free_full (writable_path, (GDestroyNotify) g_object_unref);
+}
+
+/* Return TRUE when the caller should schedule another step. Each call
+ * examines at most one entry, performs at most one per-file decode, or
+ * opens/closes at most one directory enumerator. Synchronous per-file
+ * decoding is still indivisible; a slow individual file may block UI.
+ */
+gboolean
+gimp_data_loader_factory_incremental_step (GimpDataFactory *factory,
+                                           GimpContext     *context)
+{
+  GimpDataLoaderFactoryPrivate *priv;
+  GimpIncrementalDirectory     *dir;
+  GFileInfo                    *info;
+  GFile                        *child;
+  GFileType                     file_type;
+
+  g_return_val_if_fail (GIMP_IS_DATA_LOADER_FACTORY (factory), FALSE);
+  g_return_val_if_fail (GIMP_IS_CONTEXT (context), FALSE);
+
+  priv = GET_PRIVATE (factory);
+  if (! priv->incremental_dirs)
+    return FALSE;
+
+  if (g_queue_is_empty (priv->incremental_dirs))
+    {
+      gimp_data_loader_factory_incremental_cancel (factory);
+      return FALSE;
+    }
+
+  dir = g_queue_peek_head (priv->incremental_dirs);
+
+  if (! dir->enumerator)
+    {
+      dir->enumerator =
+        g_file_enumerate_children (dir->directory,
+                                   G_FILE_ATTRIBUTE_STANDARD_NAME ","
+                                   G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN ","
+                                   G_FILE_ATTRIBUTE_STANDARD_TYPE ","
+                                   G_FILE_ATTRIBUTE_TIME_MODIFIED,
+                                   G_FILE_QUERY_INFO_NONE,
+                                   NULL, NULL);
+      if (! dir->enumerator)
+        {
+          g_queue_pop_head (priv->incremental_dirs);
+          gimp_incremental_directory_free (dir);
+        }
+
+      return TRUE;
+    }
+
+  info = g_file_enumerator_next_file (dir->enumerator, NULL, NULL);
+
+  if (! info)
+    {
+      g_queue_pop_head (priv->incremental_dirs);
+      gimp_incremental_directory_free (dir);
+      return TRUE;
+    }
+
+  if (g_file_info_get_attribute_boolean (info,
+                                          G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN))
+    {
+      g_object_unref (info);
+      return TRUE;
+    }
+
+  child = g_file_enumerator_get_child (dir->enumerator, info);
+  file_type = g_file_info_get_file_type (info);
+
+  if (file_type == G_FILE_TYPE_DIRECTORY)
+    {
+      /* The parent's enumerator remains open while the nested directory
+       * is scanned on subsequent iterations.
+       */
+      g_queue_push_head (priv->incremental_dirs,
+                         gimp_incremental_directory_new (child,
+                                                         dir->top_directory,
+                                                         dir->writable));
+    }
+  else if (file_type == G_FILE_TYPE_REGULAR)
+    {
+      gimp_data_loader_factory_load_data (factory, context, NULL,
+                                          dir->writable, child, info,
+                                          dir->top_directory);
+    }
+
+  g_object_unref (child);
+  g_object_unref (info);
+
+  return TRUE;
 }
 
 
