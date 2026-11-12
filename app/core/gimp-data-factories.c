@@ -96,6 +96,7 @@ typedef struct
   GimpDataFactory     *factories[GIMP_STARTUP_N_RESOURCES];
   gboolean             pending[GIMP_STARTUP_N_RESOURCES];
   gboolean             loading[GIMP_STARTUP_N_RESOURCES];
+  gboolean             bootstrap_complete;
   guint                idle_id;
 } GimpStartupState;
 
@@ -308,6 +309,24 @@ gimp_data_factories_startup_require_factory (Gimp            *gimp,
           return;
         }
     }
+}
+
+/* Container access is a hard dependency after factory registration/tag-cache
+ * setup has completed, including access by plug-ins during the restore signal.
+ * Before that boundary, the core itself needs provisional containers.
+ */
+void
+gimp_data_factories_startup_require_container (Gimp            *gimp,
+                                               GimpDataFactory *factory)
+{
+  GimpStartupState *state;
+
+  g_return_if_fail (GIMP_IS_GIMP (gimp));
+
+  state = gimp_startup_get_state (gimp);
+
+  if (state && state->bootstrap_complete)
+    gimp_data_factories_startup_require_factory (gimp, factory);
 }
 
 void
@@ -746,6 +765,11 @@ gimp_data_factories_load_progressive (Gimp               *gimp,
                                 gimp_data_factory_get_container (gimp->font_factory));
   gimp_tag_cache_add_container (gimp->tag_cache,
                                 gimp_data_factory_get_container (gimp->tool_preset_factory));
+
+  /* From here, consumers such as plug-ins can request fully populated
+   * containers, not just the bootstrap fallback objects.
+   */
+  state->bootstrap_complete = TRUE;
 }
 
 void
