@@ -62,6 +62,285 @@
 #include "gimp-intl.h"
 
 
+/* Opt-in progressive startup. All operations run on the GIMP main context:
+ * factory refresh and container notifications are not thread-safe.
+ *
+ * A user request may take an item out of the pending queue immediately.
+ * An already executing synchronous factory refresh is not preemptible;
+ * per-file cooperative scheduling is a separate follow-up optimization.
+ */
+#define GIMP_STARTUP_STATE_KEY "gimp-progressive-startup"
+
+typedef enum
+{
+  GIMP_STARTUP_EMPTY,
+  GIMP_STARTUP_IMAGE,
+  GIMP_STARTUP_PROJECT
+} GimpStartupMode;
+
+typedef enum
+{
+  GIMP_STARTUP_MYPAINT,
+  GIMP_STARTUP_PATTERNS,
+  GIMP_STARTUP_PALETTES,
+  GIMP_STARTUP_GRADIENTS,
+  GIMP_STARTUP_TOOL_PRESETS,
+  GIMP_STARTUP_N_RESOURCES
+} GimpStartupResource;
+
+typedef struct
+{
+  Gimp                *gimp;    /* weak; state is owned by Gimp */
+  GimpStartupMode      mode;
+  GimpDataFactory     *factories[GIMP_STARTUP_N_RESOURCES];
+  gboolean             pending[GIMP_STARTUP_N_RESOURCES];
+  gboolean             loading[GIMP_STARTUP_N_RESOURCES];
+  guint                idle_id;
+} GimpStartupState;
+
+
+static GimpStartupState *
+gimp_startup_get_state (Gimp *gimp)
+{
+  return g_object_get_data (G_OBJECT (gimp), GIMP_STARTUP_STATE_KEY);
+}
+
+static void
+gimp_startup_state_free (gpointer data)
+{
+  GimpStartupState *state = data;
+
+  if (state->idle_id)
+    g_source_remove (state->idle_id);
+
+  g_free (state);
+}
+
+static gboolean
+gimp_startup_is_project (const gchar *filename)
+{
+  GFile   *file;
+  gchar   *base;
+  gchar   *lower;
+  gboolean is_project;
+
+  file = g_file_new_for_commandline_arg (filename);
+  base = g_file_get_basename (file);
+  lower = g_ascii_strdown (base ? base : "", -1);
+
+  /* A known regular image is safe to classify as an image. An
+   * unrecognized type takes the conservative project path, so that
+   * project-specific resources are never silently skipped.
+   */
+  is_project = ! (g_str_has_suffix (lower, ".png")  ||
+                  g_str_has_suffix (lower, ".jpg")  ||
+                  g_str_has_suffix (lower, ".jpeg") ||
+                  g_str_has_suffix (lower, ".gif")  ||
+                  g_str_has_suffix (lower, ".bmp")  ||
+                  g_str_has_suffix (lower, ".tif")  ||
+                  g_str_has_suffix (lower, ".tiff") ||
+                  g_str_has_suffix (lower, ".webp") ||
+                  g_str_has_suffix (lower, ".avif") ||
+                  g_str_has_suffix (lower, ".heic") ||
+                  g_str_has_suffix (lower, ".heif") ||
+                  g_str_has_suffix (lower, ".jxl")  ||
+                  g_str_has_suffix (lower, ".ico"));
+
+  g_free (lower);
+  g_free (base);
+  g_object_unref (file);
+
+  return is_project;
+}
+
+void
+gimp_data_factories_startup_prepare (Gimp          *gimp,
+                                     const gchar  **filenames,
+                                     gboolean       enabled)
+{
+  GimpStartupState *state;
+  gint              i;
+
+  g_return_if_fail (GIMP_IS_GIMP (gimp));
+
+  /* Do not apply this experiment to batch, headless or --no-data runs.
+   * The caller also opts in explicitly through an environment variable.
+   */
+  if (! enabled || gimp->no_interface || gimp->no_data)
+    return;
+
+  if (gimp_startup_get_state (gimp))
+    return;
+
+  state = g_new0 (GimpStartupState, 1);
+  state->gimp = gimp;
+  state->mode = GIMP_STARTUP_EMPTY;
+
+  if (filenames && filenames[0])
+    {
+      state->mode = GIMP_STARTUP_IMAGE;
+
+      for (i = 0; filenames[i]; i++)
+        {
+          if (gimp_startup_is_project (filenames[i]))
+            {
+              state->mode = GIMP_STARTUP_PROJECT;
+              break;
+            }
+        }
+    }
+
+  state->factories[GIMP_STARTUP_MYPAINT]      = gimp->mybrush_factory;
+  state->factories[GIMP_STARTUP_PATTERNS]     = gimp->pattern_factory;
+  state->factories[GIMP_STARTUP_PALETTES]     = gimp->palette_factory;
+  state->factories[GIMP_STARTUP_GRADIENTS]    = gimp->gradient_factory;
+  state->factories[GIMP_STARTUP_TOOL_PRESETS] = gimp->tool_preset_factory;
+
+  g_object_set_data_full (G_OBJECT (gimp), GIMP_STARTUP_STATE_KEY,
+                          state, gimp_startup_state_free);
+
+  if (g_strcmp0 (g_getenv ("GIMP_STARTUP_PROFILE"), "1") == 0)
+    g_printerr ("GIMP_PROGRESSIVE_STARTUP,mode,%s\n",
+                state->mode == GIMP_STARTUP_EMPTY ? "empty" :
+                state->mode == GIMP_STARTUP_IMAGE ? "image" : "project");
+}
+
+static void
+gimp_startup_load_resource (GimpStartupState    *state,
+                            GimpStartupResource  resource,
+                            const gchar         *reason)
+{
+  GimpDataFactory *factory;
+  gint64           start;
+
+  if (! state->pending[resource] || state->loading[resource])
+    return;
+
+  /* Mark no longer pending before refresh: factory data loading can emit
+   * "add" and "notify" signals which recursively request its container.
+   */
+  state->pending[resource] = FALSE;
+  state->loading[resource] = TRUE;
+  factory = state->factories[resource];
+  start = g_get_monotonic_time ();
+
+  gimp_data_factory_data_refresh (factory,
+                                  gimp_get_user_context (state->gimp));
+  gimp_data_factory_data_clean (factory);
+
+  state->loading[resource] = FALSE;
+
+  if (g_strcmp0 (g_getenv ("GIMP_STARTUP_PROFILE"), "1") == 0)
+    g_printerr ("GIMP_PROGRESSIVE_STARTUP,resource,%s,%s,%" G_GINT64_FORMAT "\n",
+                gimp_object_get_name (GIMP_OBJECT (factory)),
+                reason, g_get_monotonic_time () - start);
+}
+
+static gboolean
+gimp_startup_load_idle (gpointer data)
+{
+  GimpStartupState         *state = data;
+  const GimpStartupResource empty_order[] = {
+    GIMP_STARTUP_TOOL_PRESETS, GIMP_STARTUP_PALETTES,
+    GIMP_STARTUP_GRADIENTS, GIMP_STARTUP_PATTERNS,
+    GIMP_STARTUP_MYPAINT
+  };
+  const GimpStartupResource image_order[] = {
+    GIMP_STARTUP_PATTERNS, GIMP_STARTUP_GRADIENTS,
+    GIMP_STARTUP_PALETTES, GIMP_STARTUP_MYPAINT,
+    GIMP_STARTUP_TOOL_PRESETS
+  };
+  const GimpStartupResource *order = (state->mode == GIMP_STARTUP_IMAGE ?
+                                       image_order : empty_order);
+  guint i;
+
+  /* Execute at most one category per low-priority main-loop turn. */
+  for (i = 0; i < G_N_ELEMENTS (empty_order); i++)
+    {
+      if (state->pending[order[i]])
+        {
+          gimp_startup_load_resource (state, order[i], "background");
+          return G_SOURCE_CONTINUE;
+        }
+    }
+
+  state->idle_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
+void
+gimp_data_factories_startup_begin_background (Gimp *gimp)
+{
+  GimpStartupState *state;
+
+  g_return_if_fail (GIMP_IS_GIMP (gimp));
+
+  state = gimp_startup_get_state (gimp);
+  if (! state || state->mode == GIMP_STARTUP_PROJECT || state->idle_id)
+    return;
+
+  state->idle_id = g_idle_add_full (G_PRIORITY_LOW,
+                                    gimp_startup_load_idle,
+                                    state, NULL);
+}
+
+void
+gimp_data_factories_startup_require_factory (Gimp            *gimp,
+                                             GimpDataFactory *factory)
+{
+  GimpStartupState *state;
+  guint             i;
+
+  g_return_if_fail (GIMP_IS_GIMP (gimp));
+
+  state = gimp_startup_get_state (gimp);
+  if (! state)
+    return;
+
+  for (i = 0; i < GIMP_STARTUP_N_RESOURCES; i++)
+    {
+      if (state->factories[i] == factory)
+        {
+          if (state->pending[i])
+            gimp_startup_load_resource (state, i, "user-request");
+
+          return;
+        }
+    }
+}
+
+void
+gimp_data_factories_startup_require_all (Gimp *gimp)
+{
+  GimpStartupState *state;
+  guint             i;
+
+  g_return_if_fail (GIMP_IS_GIMP (gimp));
+
+  state = gimp_startup_get_state (gimp);
+  if (! state)
+    return;
+
+  if (state->idle_id)
+    {
+      g_source_remove (state->idle_id);
+      state->idle_id = 0;
+    }
+
+  for (i = 0; i < GIMP_STARTUP_N_RESOURCES; i++)
+    if (state->pending[i])
+      gimp_startup_load_resource (state, i, "require-all");
+}
+
+void
+gimp_data_factories_startup_clear (Gimp *gimp)
+{
+  g_return_if_fail (GIMP_IS_GIMP (gimp));
+
+  g_object_set_data (G_OBJECT (gimp), GIMP_STARTUP_STATE_KEY, NULL);
+}
+
+
 void
 gimp_data_factories_init (Gimp *gimp)
 {
