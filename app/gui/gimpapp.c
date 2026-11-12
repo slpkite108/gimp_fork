@@ -130,7 +130,7 @@ gimp_app_new (Gimp        *gimp,
   GimpApp *app;
 
   app = g_object_new (GIMP_TYPE_APP,
-                      "application-id",    GIMP_APPLICATION_ID,
+                      "application-id",    "org.gimp.ProgressiveFork",
                       /* We have our own code to handle process uniqueness, so
                        * when we reached this code, we are already passed this
                        * (it means that either this is the first process, or we
