@@ -586,9 +586,17 @@ void
 gimp_data_factory_data_refresh (GimpDataFactory *factory,
                                 GimpContext     *context)
 {
+  GimpDataFactoryPrivate *priv;
+
   g_return_if_fail (GIMP_IS_DATA_FACTORY (factory));
   g_return_if_fail (GIMP_IS_CONTEXT (context));
 
+  priv = GET_PRIVATE (factory);
+
+  /* A regular refresh consumes the complete factory and invalidates any
+   * pending progressive initial scan, including a changed search path.
+   */
+  gimp_data_factories_startup_note_full_refresh (priv->gimp, factory);
   GIMP_DATA_FACTORY_GET_CLASS (factory)->data_refresh (factory, context);
 }
 
