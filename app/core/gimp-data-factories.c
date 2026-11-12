@@ -18,6 +18,7 @@
 #include "config.h"
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <gio/gio.h>
 #include <gegl.h>
 
 #include "libgimpbase/gimpbase.h"
