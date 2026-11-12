@@ -570,6 +570,9 @@ gimp_data_factories_exit (Gimp *gimp)
 {
   g_return_if_fail (GIMP_IS_GIMP (gimp));
 
+  /* Cancel the idle source before the queued factories can be destroyed. */
+  gimp_data_factories_startup_clear (gimp);
+
   g_clear_object (&gimp->brush_factory);
   g_clear_object (&gimp->dynamics_factory);
   g_clear_object (&gimp->mybrush_factory);
@@ -587,6 +590,11 @@ gimp_data_factories_wait (Gimp *gimp)
   GList    *data_types;
   GList    *excluded;
   gboolean  loaded = TRUE;
+
+  /* XCF and other callers of this API require all resource data, not
+   * merely an empty asynchronous queue. Upgrade any pending work now.
+   */
+  gimp_data_factories_startup_require_all (gimp);
 
   /* Curves are the only data type without a factory. */
   excluded = g_list_prepend (NULL, GIMPTYPE_TO_POINTER (GIMP_TYPE_CURVE));
@@ -667,11 +675,103 @@ gimp_data_factories_data_clean (Gimp *gimp)
   gimp_data_factory_data_clean (gimp->tool_preset_factory);
 }
 
+static void
+gimp_data_factories_load_progressive (Gimp               *gimp,
+                                      GimpInitStatusFunc  status_callback,
+                                      GimpStartupState   *state)
+{
+  GimpContext *context = gimp_get_user_context (gimp);
+
+  /* Brush and paint dynamics are retained on the critical path because
+   * the initial drawing context and tool options depend on them.
+   */
+  status_callback (NULL, _("Brushes"), 0.1);
+  gimp_data_factory_data_init (gimp->brush_factory, context, gimp->no_data);
+
+  status_callback (NULL, _("Dynamics"), 0.15);
+  gimp_data_factory_data_init (gimp->dynamics_factory, context, gimp->no_data);
+
+  /* Font loading uses GimpAsync already; launch it early without blocking
+   * the first window, and keep its standard wait mechanism intact.
+   */
+  status_callback (NULL, _("Fonts"), 0.2);
+  gimp_data_factory_data_init (gimp->font_factory, context, gimp->no_fonts);
+
+  /* Register factory paths and standard data, but defer disk traversal.
+   * A later request can synchronously promote any pending resource.
+   */
+  status_callback (NULL, _("MyPaint Brushes"), 0.3);
+  gimp_data_factory_data_init (gimp->mybrush_factory, context, TRUE);
+  state->pending[GIMP_STARTUP_MYPAINT] = TRUE;
+
+  status_callback (NULL, _("Patterns"), 0.4);
+  gimp_data_factory_data_init (gimp->pattern_factory, context, TRUE);
+  state->pending[GIMP_STARTUP_PATTERNS] = TRUE;
+
+  status_callback (NULL, _("Palettes"), 0.5);
+  gimp_data_factory_data_init (gimp->palette_factory, context, TRUE);
+  state->pending[GIMP_STARTUP_PALETTES] = TRUE;
+
+  status_callback (NULL, _("Gradients"), 0.6);
+  gimp_data_factory_data_init (gimp->gradient_factory, context, TRUE);
+  state->pending[GIMP_STARTUP_GRADIENTS] = TRUE;
+
+  /* Color history uses in-memory palettes and must be restored eagerly. */
+  status_callback (NULL, _("Color History"), 0.65);
+  gimp_palettes_load (gimp);
+
+  status_callback (NULL, _("Tool Presets"), 0.7);
+  gimp_data_factory_data_init (gimp->tool_preset_factory, context, TRUE);
+  state->pending[GIMP_STARTUP_TOOL_PRESETS] = TRUE;
+
+  /* The tag cache hooks "add": deferred resource objects receive their
+   * existing tags once they are inserted into these containers.
+   */
+  status_callback (NULL, _("Updating tag cache"), 0.75);
+  gimp_tag_cache_load (gimp->tag_cache);
+  gimp_tag_cache_add_container (gimp->tag_cache,
+                                gimp_data_factory_get_container (gimp->brush_factory));
+  gimp_tag_cache_add_container (gimp->tag_cache,
+                                gimp_data_factory_get_container (gimp->dynamics_factory));
+  gimp_tag_cache_add_container (gimp->tag_cache,
+                                gimp_data_factory_get_container (gimp->mybrush_factory));
+  gimp_tag_cache_add_container (gimp->tag_cache,
+                                gimp_data_factory_get_container (gimp->pattern_factory));
+  gimp_tag_cache_add_container (gimp->tag_cache,
+                                gimp_data_factory_get_container (gimp->gradient_factory));
+  gimp_tag_cache_add_container (gimp->tag_cache,
+                                gimp_data_factory_get_container (gimp->palette_factory));
+  gimp_tag_cache_add_container (gimp->tag_cache,
+                                gimp_data_factory_get_container (gimp->font_factory));
+  gimp_tag_cache_add_container (gimp->tag_cache,
+                                gimp_data_factory_get_container (gimp->tool_preset_factory));
+}
+
 void
 gimp_data_factories_load (Gimp               *gimp,
                           GimpInitStatusFunc  status_callback)
 {
+  GimpStartupState *state;
+
   g_return_if_fail (GIMP_IS_GIMP (gimp));
+
+  state = gimp_startup_get_state (gimp);
+
+  if (state && state->mode != GIMP_STARTUP_PROJECT)
+    {
+      gimp_data_factories_load_progressive (gimp, status_callback, state);
+      return;
+    }
+
+  /* For project files, start asynchronous font enumeration first while
+   * the remaining factories initialize. All project resources stay eager.
+   */
+  if (state && state->mode == GIMP_STARTUP_PROJECT)
+    {
+      status_callback (NULL, _("Fonts"), 0.05);
+      gimp_data_factory_data_init (gimp->font_factory, gimp->user_context,
+                                   gimp->no_fonts);
+    }
 
   /*  initialize the list of gimp brushes    */
   status_callback (NULL, _("Brushes"), 0.1);
@@ -707,10 +807,13 @@ gimp_data_factories_load (Gimp               *gimp,
   status_callback (NULL, _("Color History"), 0.55);
   gimp_palettes_load (gimp);
 
-  /*  initialize the list of gimp fonts   */
-  status_callback (NULL, _("Fonts"), 0.6);
-  gimp_data_factory_data_init (gimp->font_factory, gimp->user_context,
-                               gimp->no_fonts);
+  /*  initialize the list of gimp fonts (if not already started)  */
+  if (! state || state->mode != GIMP_STARTUP_PROJECT)
+    {
+      status_callback (NULL, _("Fonts"), 0.6);
+      gimp_data_factory_data_init (gimp->font_factory, gimp->user_context,
+                                   gimp->no_fonts);
+    }
 
   /*  initialize the list of gimp tool presets if we have a GUI  */
   if (! gimp->no_interface)
