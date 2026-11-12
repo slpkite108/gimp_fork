@@ -63,12 +63,11 @@
 #include "gimp-intl.h"
 
 
-/* Opt-in progressive startup. All operations run on the GIMP main context:
- * factory refresh and container notifications are not thread-safe.
- *
- * A user request may take an item out of the pending queue immediately.
- * An already executing synchronous factory refresh is not preemptible;
- * per-file cooperative scheduling is a separate follow-up optimization.
+/* Opt-in progressive startup. All loader callbacks, resource containers
+ * and notifications remain on the GIMP main context, not worker threads.
+ * An idle turn processes one entry; an explicit feature request can promote
+ * the required resource at the next yield point. A single synchronous file
+ * decoder still cannot be interrupted in the middle of its call.
  */
 #define GIMP_STARTUP_STATE_KEY "gimp-progressive-startup"
 
@@ -358,9 +357,9 @@ gimp_data_factories_startup_require_factory (Gimp            *gimp,
     }
 }
 
-/* Container access is a hard dependency after factory registration/tag-cache
- * setup has completed, including access by plug-ins during the restore signal.
- * Before that boundary, the core itself needs provisional containers.
+/* An explicit consumer request for a fully populated container is a hard
+ * dependency after factory and tag-cache bootstrap. The generic getter does
+ * not call this function: core GimpContext creation accesses every container.
  */
 void
 gimp_data_factories_startup_require_container (Gimp            *gimp,
