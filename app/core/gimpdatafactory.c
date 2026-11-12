@@ -31,6 +31,7 @@
 #include "core-types.h"
 
 #include "gimp.h"
+#include "gimp-data-factories.h"
 #include "gimp-utils.h"
 #include "gimpasyncset.h"
 #include "gimpcancelable.h"
@@ -682,6 +683,11 @@ gimp_data_factory_get_data (GimpDataFactory *factory,
 
   g_return_val_if_fail (GIMP_IS_DATA_FACTORY (factory), NULL);
 
+  /* A named resource lookup is a hard dependency: load the factory now,
+   * even if background loading has not reached this category yet.
+   */
+  gimp_data_factories_startup_require_factory (priv->gimp, factory);
+
   container = gimp_data_factory_get_container (factory);
 
   if (collection == NULL)
@@ -928,6 +934,14 @@ gimp_data_factory_get_container (GimpDataFactory *factory)
   GimpDataFactoryPrivate *priv = GET_PRIVATE (factory);
 
   g_return_val_if_fail (GIMP_IS_DATA_FACTORY (factory), NULL);
+
+  /* During bootstrap these containers must remain accessible for
+   * standard-data creation and tag-cache registration. Once GIMP is
+   * initialized, a consumer asking for the container needs its contents
+   * rather than an empty placeholder.
+   */
+  if (priv->gimp->initialized)
+    gimp_data_factories_startup_require_factory (priv->gimp, factory);
 
   return priv->container;
 }
