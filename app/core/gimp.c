@@ -597,6 +597,11 @@ gimp_real_exit (Gimp     *gimp,
   gimp_extension_manager_exit (gimp->extension_manager);
   gimp_modules_unload (gimp);
 
+  /* Finish any delayed resource discovery before serializing resource
+   * state and tag metadata. This avoids losing references on an early
+   * application exit while background loading is still pending.
+   */
+  gimp_data_factories_startup_require_all (gimp);
   gimp_data_factories_save (gimp);
 
   gimp_templates_save (gimp);
