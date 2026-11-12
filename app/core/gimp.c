@@ -858,6 +858,13 @@ gimp_restore (Gimp                *gimp,
               GimpInitStatusFunc   status_callback,
               GError             **error)
 {
+  gboolean startup_profile = g_strcmp0 (g_getenv ("GIMP_STARTUP_PROFILE"), "1") == 0;
+  gint64   profile_start = 0;
+  gint64   profile_last = 0;
+
+  if (startup_profile)
+    profile_start = profile_last = g_get_monotonic_time ();
+
   g_return_if_fail (GIMP_IS_GIMP (gimp));
   g_return_if_fail (status_callback != NULL);
 
@@ -868,24 +875,72 @@ gimp_restore (Gimp                *gimp,
   status_callback (_("Looking for data files"), _("Parasites"), 0.0);
   gimp_parasiterc_load (gimp);
 
+  if (startup_profile)
+    {
+      gint64 now = g_get_monotonic_time ();
+      g_printerr ("GIMP_RESTORE_PROFILE,parasites,%" G_GINT64_FORMAT ",%" G_GINT64_FORMAT "\n",
+                  now - profile_start, now - profile_last);
+      profile_last = now;
+    }
+
   /*  initialize the lists of gimp brushes, dynamics, patterns etc.  */
   gimp_data_factories_load (gimp, status_callback);
+
+  if (startup_profile)
+    {
+      gint64 now = g_get_monotonic_time ();
+      g_printerr ("GIMP_RESTORE_PROFILE,data_factories,%" G_GINT64_FORMAT ",%" G_GINT64_FORMAT "\n",
+                  now - profile_start, now - profile_last);
+      profile_last = now;
+    }
 
   /*  initialize the template list  */
   status_callback (NULL, _("Templates"), 0.8);
   gimp_templates_load (gimp);
 
+  if (startup_profile)
+    {
+      gint64 now = g_get_monotonic_time ();
+      g_printerr ("GIMP_RESTORE_PROFILE,templates,%" G_GINT64_FORMAT ",%" G_GINT64_FORMAT "\n",
+                  now - profile_start, now - profile_last);
+      profile_last = now;
+    }
+
   /*  initialize the module list  */
   status_callback (NULL, _("Modules"), 0.9);
   gimp_modules_load (gimp);
 
+  if (startup_profile)
+    {
+      gint64 now = g_get_monotonic_time ();
+      g_printerr ("GIMP_RESTORE_PROFILE,modules,%" G_GINT64_FORMAT ",%" G_GINT64_FORMAT "\n",
+                  now - profile_start, now - profile_last);
+      profile_last = now;
+    }
+
   g_signal_emit (gimp, gimp_signals[RESTORE], 0, status_callback);
+
+  if (startup_profile)
+    {
+      gint64 now = g_get_monotonic_time ();
+      g_printerr ("GIMP_RESTORE_PROFILE,restore_signal,%" G_GINT64_FORMAT ",%" G_GINT64_FORMAT "\n",
+                  now - profile_start, now - profile_last);
+      profile_last = now;
+    }
 
   /* when done, make sure everything is clean, to clean out dirty
    * states from data objects which reference each other and got
    * dirtied by loading the referenced object
    */
   gimp_data_factories_data_clean (gimp);
+
+  if (startup_profile)
+    {
+      gint64 now = g_get_monotonic_time ();
+      g_printerr ("GIMP_RESTORE_PROFILE,data_clean,%" G_GINT64_FORMAT ",%" G_GINT64_FORMAT "\n",
+                  now - profile_start, now - profile_last);
+      profile_last = now;
+    }
 }
 
 /**
