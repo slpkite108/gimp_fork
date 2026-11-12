@@ -2,6 +2,12 @@
 
 **Status (2026-11-12): code committed, Windows build and runtime behavior NOT verified.** The entire experiment is OFF by default. Keep the original startup behavior as the control.
 
+**Side-by-side safety:** This fork now isolates its user configuration,
+cache/temp directories, Windows instance identity, application ID and
+D-Bus service name from an installed GIMP. Use the guarded launch script
+for Windows development and never install over an existing GIMP prefix.
+See [Fork isolation guide](fork-isolation.md).
+
 ## Goals
 
 - Respect the startup intent: empty application, file-associated image, or file-associated project.
