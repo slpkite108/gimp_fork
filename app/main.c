@@ -94,6 +94,59 @@
 #include "gimp-version.h"
 
 
+
+/* This GitHub fork is a separately installed/runnable development variant.
+ * Assign private settings, cache and temp paths before GIMP env init so
+ * opening the test executable never writes to the system GIMP profile.
+ *
+ * Deliberately override inherited GIMP3_* user paths: a shell with a
+ * previous GIMP3_DIRECTORY pointing at the installed editor must not
+ * accidentally redirect the fork back to that live profile.
+ */
+static gboolean
+gimp_progressive_fork_isolate (void)
+{
+  gchar *settings;
+  gchar *cache;
+  gchar *temporary;
+  gint   result;
+
+  settings  = g_build_filename (g_get_user_config_dir (),
+                                "GIMP-Progressive-Fork", GIMP_USER_VERSION,
+                                NULL);
+  cache     = g_build_filename (g_get_user_cache_dir (),
+                                "GIMP-Progressive-Fork", GIMP_USER_VERSION,
+                                NULL);
+  temporary = g_build_filename (g_get_tmp_dir (),
+                                "GIMP-Progressive-Fork", GIMP_USER_VERSION,
+                                NULL);
+
+  result = g_mkdir_with_parents (temporary, 0700);
+
+  if (result != 0)
+    {
+      g_printerr ("GIMP Progressive: could not create isolated temp folder: %s\n",
+                  temporary);
+    }
+  else
+    {
+      g_setenv ("GIMP3_DIRECTORY", settings, TRUE);
+      g_setenv ("GIMP3_CACHEDIR", cache, TRUE);
+      g_setenv ("GIMP3_TEMPDIR", temporary, TRUE);
+
+      /* Do not migrate a user's existing GIMP profile into the fork.
+       * The first-run creator still generates the fork's default files.
+       */
+      g_setenv ("GIMP_PROGRESSIVE_FORK_ISOLATED", "1", TRUE);
+    }
+
+  g_free (settings);
+  g_free (cache);
+  g_free (temporary);
+
+  return result == 0;
+}
+
 static gboolean  gimp_option_fatal_warnings   (const gchar  *option_name,
                                                const gchar  *value,
                                                gpointer      data,
@@ -824,11 +877,15 @@ main (int    argc,
       (t_SetCurrentProcessExplicitAppUserModelID) GetProcAddress (GetModuleHandleW (L"shell32.dll"),
                                                                   "SetCurrentProcessExplicitAppUserModelID");
     if (p_SetCurrentProcessExplicitAppUserModelID)
-      (*p_SetCurrentProcessExplicitAppUserModelID) (L"gimp.GimpApplication");
+      (*p_SetCurrentProcessExplicitAppUserModelID) (L"gimp.ProgressiveFork");
   }
 #endif
 
   gimp_init_malloc ();
+
+  /* Prevent profile/cache/IPC cross-talk with an installed GIMP. */
+  if (! gimp_progressive_fork_isolate ())
+    return EXIT_FAILURE;
 
   gimp_env_init (FALSE);
 
@@ -993,7 +1050,7 @@ main (int    argc,
       /* Windows Explorer spawns separate processes when multiple files are selected
          (except for the MSIX, where the it passes each filename as on Unix: 55c97120).
          The only realiable way to them communicate is a mutex early on main.c. See: #364 */
-      HANDLE primary_instance = CreateMutexW (NULL, FALSE, L"Local\\gimp_primary_instance_running");
+      HANDLE primary_instance = CreateMutexW (NULL, FALSE, L"Local\\gimp_progressive_fork_primary_instance_running");
       DWORD  primary_instance_error = primary_instance ? GetLastError () : 0;
 
       if (primary_instance && primary_instance_error == ERROR_ALREADY_EXISTS)
