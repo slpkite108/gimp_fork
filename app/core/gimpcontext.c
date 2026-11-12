@@ -35,6 +35,7 @@
 #include "gegl/gimp-babl.h"
 
 #include "gimp.h"
+#include "gimp-data-factories.h"
 #include "gimp-memsize.h"
 #include "gimpbrush.h"
 #include "gimpbuffer.h"
@@ -2160,6 +2161,26 @@ gimp_context_set_tool (GimpContext  *context,
 {
   g_return_if_fail (GIMP_IS_CONTEXT (context));
   g_return_if_fail (tool_info == NULL || GIMP_IS_TOOL_INFO (tool_info));
+
+  /* Only an actual user-tool switch is a demand signal. GIMP creates
+   * many internal tool-option contexts while restoring the UI; treating
+   * those as user requests would eagerly load every deferred resource.
+   */
+  if (tool_info && context == gimp_get_user_context (context->gimp))
+    {
+      const gchar *name = gimp_object_get_name (GIMP_OBJECT (tool_info));
+
+      if (g_strcmp0 (name, "gimp-mypaint-brush-tool") == 0)
+        gimp_data_factories_startup_require_container (context->gimp,
+                                                       context->gimp->mybrush_factory);
+      else if (g_strcmp0 (name, "gimp-gradient-tool") == 0)
+        gimp_data_factories_startup_require_container (context->gimp,
+                                                       context->gimp->gradient_factory);
+      else if (g_strcmp0 (name, "gimp-bucket-fill-tool") == 0 ||
+               g_strcmp0 (name, "gimp-clone-tool") == 0)
+        gimp_data_factories_startup_require_container (context->gimp,
+                                                       context->gimp->pattern_factory);
+    }
 
   context_find_defined (context, GIMP_CONTEXT_PROP_TOOL);
 
