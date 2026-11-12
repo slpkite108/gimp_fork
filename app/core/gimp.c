@@ -593,15 +593,15 @@ gimp_real_exit (Gimp     *gimp,
   if (gimp->be_verbose)
     g_print ("EXIT: %s\n", G_STRFUNC);
 
+  /* Finish delayed resource discovery before plug-ins, extensions and
+   * modules are unloaded, and before writing resource/tag metadata.
+   */
+  gimp_data_factories_startup_require_all (gimp);
+
   gimp_plug_in_manager_exit (gimp->plug_in_manager);
   gimp_extension_manager_exit (gimp->extension_manager);
   gimp_modules_unload (gimp);
 
-  /* Finish any delayed resource discovery before serializing resource
-   * state and tag metadata. This avoids losing references on an early
-   * application exit while background loading is still pending.
-   */
-  gimp_data_factories_startup_require_all (gimp);
   gimp_data_factories_save (gimp);
 
   gimp_templates_save (gimp);
