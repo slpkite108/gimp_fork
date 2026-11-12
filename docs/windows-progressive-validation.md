@@ -5,6 +5,14 @@ Date: 2026-11-12. Tested code: `ef444a24bf1e3bbda1488bebda4a5b29778578a9`.
 The Windows build and focused functional checks passed. This establishes a
 working development build, not release readiness or a cold-start speedup.
 
+**Measurement correction (2026-11-12):** the original 30 startup samples below
+used an unfinished first-run profile. The automation quit GIMP while the welcome
+dialog was still open, preventing startup metadata from being saved. Every run
+therefore queried all 140 plug-ins again. These samples must not be used as
+normal cached-startup measurements or to judge the progressive loader's benefit.
+After closing the welcome dialog normally, two diagnostic restarts initialized
+in 2.622 and 2.564 seconds. See the root-cause investigation below.
+
 ## Environment and build
 
 - Windows 11 Education, build 26300, x86-64; Ryzen 5 7500F, 6 cores / 12 threads.
@@ -89,9 +97,9 @@ Use `-Mode Image -FilePath <copied.png>` or `-Mode Project -FilePath <copied.xcf
 for file-opening checks. Add `-Baseline` to keep eager loading while preserving
 the fork's private profile and `--new-instance` isolation.
 
-## Diagnostic startup measurements
+## Superseded startup measurements
 
-The performance verdict is **inconclusive for user-visible cold start**. These
+These results are **invalid as a normal cached-startup comparison**. These
 runs measure the existing internal `app_run()` to `initialized` interval. They
 exclude process creation/DLL loading, do not measure first paint or input
 latency, and do not establish a production-release speedup.
@@ -122,19 +130,61 @@ Times below are seconds, median [minimum, maximum], five runs per cell.
 | PNG | 21.070 [20.973, 21.160] | 20.896 [20.852, 20.913] |
 | XCF | 20.559 [20.507, 20.822] | 20.594 [20.491, 20.676] |
 
-The empty-launch median was 0.309 seconds lower with the flag. The PNG median
-was 0.174 seconds lower, a difference smaller than the baseline's observed
-range. XCF ranges overlap substantially; there is no measurable XCF improvement
-in this sample. Do not interpret these development-build figures as an
-end-to-end cold-start benchmark.
+The values are retained as an audit record of the flawed test setup. No
+eager-versus-progressive performance conclusion should be drawn from them.
 
 The dominant timed interval was `restore_signal`: group medians were
 19.727–19.986 seconds, approximately 94–98% of the corresponding initialization
 medians. This aggregate includes plug-in restoration, babl conversion setup and
-GUI restoration callbacks. The specific blocking operation has not been
-profiled, so the root limiter is still unknown. Investigate that interval and
-add first-paint/input probes before choosing the next optimization or claiming
-a user-visible speedup.
+GUI restoration callbacks. The follow-up below identifies repeated plug-in
+queries as the dominant cause in this test setup.
+
+## Root cause: incomplete first-run state
+
+Timestamped `--verbose` output exposed the following sequence:
+
+1. `welcome_dialog_create()` disables configuration autosaving while its dialog
+   is open (`app/dialogs/welcome-dialog.c`).
+2. Startup then sets `config-version` and `prev-language` in memory
+   (`app/app.c`). Closing the whole application while the welcome dialog is
+   still open did not write these fields to the test profile's `gimprc`.
+3. At the next launch, missing `prev-language` sets `gimp->query_all = TRUE`.
+   `gimp_plug_in_manager_query_new()` consequently queries every plug-in,
+   despite the presence of a valid `pluginrc` cache.
+4. Each query starts a plug-in process, including Python interpreters. The
+   unacknowledged-profile diagnostic spent about 18.73 seconds between the
+   first query and plug-in initialization. This explains most of the previous
+   approximately 20-second restore interval.
+
+Clicking the welcome dialog's **Close** button invokes
+`welcome_dialog_response()`, which calls `gimp_rc_save()`. The test profile then
+contained `prev-language` and `config-version`; the next two restarts queried
+only three RAW bridge plug-ins instead of all 140.
+
+| Diagnostic run | Plug-ins queried | Internal initialization |
+|---|---:|---:|
+| Unacknowledged first-run profile, repeated launch | 140 | 21.126 s |
+| After closing the welcome dialog normally | 3 | 2.622 s |
+| Another restart using that saved profile | 3 | 2.564 s |
+
+All three runs used the same binary and progressive flag. The difference is
+profile initialization, **not an improvement made to the progressive algorithm**.
+These are instrumented diagnostic runs, not a five-pair performance benchmark.
+The first post-install trace also queried 140 plug-ins and took 34.006 seconds;
+it is not used as the steady-state baseline because installation had refreshed
+the plug-in files. The original application's saved profile was not modified.
+
+Both diagnostic restarts returned zero but logged a
+`gimp_device_info_save_tool: GIMP_IS_DEVICE_INFO (info)` critical assertion
+during shutdown. Its cause is unresolved and separate from the startup timing;
+these runs do not establish clean shutdown or release readiness. The normal
+launcher's separate fork profile already contained the required startup metadata.
+
+The earlier test procedure failed to complete first-run setup. A valid new
+comparison must close the welcome dialog, verify both metadata fields, confirm
+cache reuse, then alternate eager/progressive runs in fresh result files. Do
+not reuse or overwrite the superseded samples. First-paint, input latency and
+true OS cold start still require separate measurement.
 
 ## Remaining limits and warnings
 
