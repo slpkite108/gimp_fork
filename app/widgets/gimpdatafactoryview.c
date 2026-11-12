@@ -31,6 +31,7 @@
 #include "widgets-types.h"
 
 #include "core/gimp.h"
+#include "core/gimp-data-factories.h"
 #include "core/gimpcontainer.h"
 #include "core/gimpcontext.h"
 #include "core/gimpdata.h"
@@ -479,6 +480,12 @@ gimp_data_factory_view_new (GimpViewType      view_type,
   g_return_val_if_fail (menu_factory == NULL ||
                         GIMP_IS_MENU_FACTORY (menu_factory), NULL);
   g_return_val_if_fail (action_group != NULL, NULL);
+
+  /* Opening an actual resource dock is a demand event. In contrast,
+   * the generic container getter is used throughout core bootstrap and
+   * must not accidentally promote every pending factory.
+   */
+  gimp_data_factories_startup_require_container (context->gimp, factory);
 
   return g_object_new (GIMP_TYPE_DATA_FACTORY_VIEW,
                        "view-type",         view_type,
