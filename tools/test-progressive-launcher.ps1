@@ -104,3 +104,6 @@ class GuiFixture {
         Remove-Item -LiteralPath $target -Recurse -Force
     }
 }
+
+# The failure fixture intentionally exits 7; do not leak that status to CI.
+exit 0
