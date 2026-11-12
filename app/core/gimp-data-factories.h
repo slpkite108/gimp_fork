@@ -32,3 +32,21 @@ void      gimp_data_factories_data_clean  (Gimp   *gimp);
 void      gimp_data_factories_load        (Gimp               *gimp,
                                            GimpInitStatusFunc  status_callback);
 void      gimp_data_factories_save        (Gimp               *gimp);
+
+/* Experimental, opt-in startup scheduling. All functions are called on the
+ * GIMP main thread; deferred factory loading must not touch GTK off-thread.
+ */
+void      gimp_data_factories_startup_prepare
+                                          (Gimp               *gimp,
+                                           const gchar       **filenames,
+                                           gboolean            enabled);
+void      gimp_data_factories_startup_begin_background
+                                          (Gimp               *gimp);
+void      gimp_data_factories_startup_require_factory
+                                          (Gimp               *gimp,
+                                           GimpDataFactory    *factory);
+void      gimp_data_factories_startup_require_all
+                                          (Gimp               *gimp);
+void      gimp_data_factories_startup_clear
+                                          (Gimp               *gimp);
+
