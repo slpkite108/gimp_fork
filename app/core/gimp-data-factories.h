@@ -50,6 +50,9 @@ void      gimp_data_factories_startup_require_container
                                            GimpDataFactory    *factory);
 void      gimp_data_factories_startup_require_all
                                           (Gimp               *gimp);
+void      gimp_data_factories_startup_note_full_refresh
+                                          (Gimp               *gimp,
+                                           GimpDataFactory    *factory);
 void      gimp_data_factories_startup_clear
                                           (Gimp               *gimp);
 
