@@ -33,6 +33,7 @@
 #include "gimp.h"
 #include "gimp-utils.h"
 #include "gimpcontainer.h"
+#include "gimpcontext.h"
 #include "gimpdata.h"
 #include "gimpdataloaderfactory.h"
 
@@ -203,13 +204,13 @@ gimp_data_loader_factory_data_refresh (GimpDataFactory *factory,
                                        GimpContext     *context)
 {
   GimpContainer *container = gimp_data_factory_get_container (factory);
+  GHashTable    *cache;
 
   /* An explicit refresh (e.g. resource-path modification) replaces
    * progressive enumeration; do not keep stale enumerators or duplicate
    * the objects added by a full refresh.
    */
   gimp_data_loader_factory_incremental_cancel (factory);
-  GHashTable    *cache;
 
   gimp_container_freeze (container);
 

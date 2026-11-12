@@ -181,12 +181,18 @@ gimp_plug_in_manager_restore (GimpPlugInManager  *manager,
 
 
 #ifdef G_OS_WIN32
-/* on Windows, any file with an extension is considered executable, so
-   e.g. ".pdb"/CodeView files would be wrongly picked. See also: #14554 */
+/* On Windows, any file with an extension is considered executable.
+ * Exclude debug and build artifacts when scanning uninstalled plug-ins.
+ * See also: #14554.
+ */
 static gboolean
 gimp_plug_in_manager_skip_file (const gchar *filename)
 {
-  return g_str_has_suffix (filename, ".pdb");
+  return (g_str_has_suffix (filename, ".pdb") ||
+          g_str_has_suffix (filename, ".rc")  ||
+          g_str_has_suffix (filename, ".o")   ||
+          g_str_has_suffix (filename, ".obj") ||
+          g_str_has_suffix (filename, ".dummy"));
 }
 #else
 #define gimp_plug_in_manager_skip_file(filename) (FALSE)

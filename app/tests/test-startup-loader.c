@@ -12,8 +12,9 @@
 #include <gegl.h>
 #include <glib/gstdio.h>
 #include <gio/gio.h>
+#include <gtk/gtk.h>
 
-#include "core/core-types.h"
+#include "widgets/widgets-types.h"
 #include "core/gimp.h"
 #include "core/gimpcontainer.h"
 #include "core/gimpcontext.h"
