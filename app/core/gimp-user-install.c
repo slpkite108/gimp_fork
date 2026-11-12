@@ -173,6 +173,12 @@ gimp_user_install_new (GObject  *gimp,
   install->buffered_lines = NULL;
   install->drop_buffered  = FALSE;
 
+  /* Never copy settings from an existing GIMP into this experimental fork.
+   * The private profile is populated with fresh defaults on first run.
+   */
+  if (g_strcmp0 (g_getenv ("GIMP_PROGRESSIVE_FORK_ISOLATED"), "1") == 0)
+    return install;
+
   user_install_detect_old (install, gimp_directory ());
 
 #ifdef PLATFORM_OSX
