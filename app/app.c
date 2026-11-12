@@ -54,6 +54,7 @@
 #include "gegl/gimp-gegl.h"
 
 #include "core/gimp.h"
+#include "core/gimp-data-factories.h"
 #include "core/gimp-batch.h"
 #include "core/gimp-user-install.h"
 #include "core/gimpidtable.h"
@@ -431,6 +432,15 @@ app_activate_callback (GimpCoreApp *app,
   gimp = gimp_core_app_get_gimp (app);
   app_startup_profile_mark ("activate_enter");
 
+  /* Experimental startup scheduler, disabled by default. Keep batch,
+   * console and explicit --no-data runs on the original eager path.
+   */
+  gimp_data_factories_startup_prepare
+    (gimp, gimp_core_app_get_filenames (app),
+     g_strcmp0 (g_getenv ("GIMP_PROGRESSIVE_STARTUP"), "1") == 0 &&
+     ! gimp_core_app_get_quit (app) &&
+     gimp_core_app_get_batch_commands (app) == NULL);
+
   gimp_core_app_set_exit_status (app, EXIT_SUCCESS);
 
   /* Language was already initialized. I call this again only to get the
@@ -574,6 +584,12 @@ app_activate_callback (GimpCoreApp *app,
    */
   gimp->initialized = TRUE;
   app_startup_profile_mark ("initialized");
+
+  /* UI and command-line image opening take precedence over optional
+   * asset enumeration. Process remaining categories on low-priority
+   * main-loop turns; a requested factory is promoted synchronously.
+   */
+  gimp_data_factories_startup_begin_background (gimp);
 
   if (font_error)
     {
