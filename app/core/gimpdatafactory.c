@@ -936,12 +936,11 @@ gimp_data_factory_get_container (GimpDataFactory *factory)
   g_return_val_if_fail (GIMP_IS_DATA_FACTORY (factory), NULL);
 
   /* During bootstrap these containers must remain accessible for
-   * standard-data creation and tag-cache registration. Once GIMP is
-   * initialized, a consumer asking for the container needs its contents
-   * rather than an empty placeholder.
+   * standard-data creation and tag-cache registration. Once factories
+   * and tag hooks are ready, consumers (including startup plug-ins) need
+   * actual contents rather than an empty placeholder.
    */
-  if (priv->gimp->initialized)
-    gimp_data_factories_startup_require_factory (priv->gimp, factory);
+  gimp_data_factories_startup_require_container (priv->gimp, factory);
 
   return priv->container;
 }
