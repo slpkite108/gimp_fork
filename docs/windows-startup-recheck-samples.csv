@@ -1,0 +1,31 @@
+Id,Mode,Baseline,InitializedMs,RestoreSignalMs,DataFactoriesMs,ImageOpenMs,StartupErrors,CompletedFactories,ExitCode,PostInitializationErrors,CloseMethod
+Cold-1-baseline,Cold,True,2583.915,1857.911,508.445,0.321,0,0,0,1,Ctrl+Q
+Cold-1-progressive,Cold,False,2447.74,2051.557,187.211,0.412,0,5,0,1,Ctrl+Q
+Cold-2-baseline,Cold,True,2533.944,1835.343,495.747,0.252,0,0,0,1,Ctrl+Q
+Cold-2-progressive,Cold,False,2386.509,1989.743,188.799,0.222,0,5,0,1,Ctrl+Q
+Cold-3-baseline,Cold,True,2611.745,1893.262,503.131,0.294,0,0,0,1,Ctrl+Q
+Cold-3-progressive,Cold,False,2435.635,2021.285,186.367,0.291,0,5,0,1,Ctrl+Q
+Cold-4-baseline,Cold,True,2533.28,1819.285,508.656,0.222,0,0,0,1,Ctrl+Q
+Cold-4-progressive,Cold,False,2444.412,1998.836,220.109,0.326,0,5,0,1,Ctrl+Q
+Cold-5-baseline,Cold,True,2585.102,1870.466,505.35,0.302,0,0,0,1,Ctrl+Q
+Cold-5-progressive,Cold,False,2412.74,1981.549,199.464,0.307,0,5,0,1,Ctrl+Q
+Image-1-baseline,Image,True,3082.633,1882.843,498.836,484.299,0,0,0,36,Ctrl+Q then debug-dialog dismissal and titlebar close
+Image-1-progressive,Image,False,2992.672,2009.782,198.335,557.154,0,5,0,36,Ctrl+Q then debug-dialog dismissal and titlebar close
+Image-2-baseline,Image,True,3132.995,1868.009,500.56,538.746,0,0,0,1,titlebar close
+Image-2-progressive,Image,False,2923.573,1985.556,188.629,544.253,0,5,0,1,titlebar close
+Image-3-baseline,Image,True,3027.868,1839.699,495.532,479.133,0,0,0,1,titlebar close
+Image-3-progressive,Image,False,2880.317,2002.512,188.958,486.252,0,5,0,1,titlebar close
+Image-4-baseline,Image,True,3043.886,1844.252,495.526,491.372,0,0,0,1,titlebar close
+Image-4-progressive,Image,False,2873.858,1976.133,191.04,490.414,0,5,0,1,titlebar close
+Image-5-baseline,Image,True,3069.419,1881.92,498.808,482.454,0,0,0,1,titlebar close
+Image-5-progressive,Image,False,2867.115,1982.795,188.012,480.173,0,5,0,1,titlebar close
+Project-1-baseline,Project,True,2586.113,1835.626,495.26,38.928,0,0,0,1,titlebar close
+Project-1-progressive,Project,False,2605.098,1853.395,517.821,32.071,0,0,0,1,titlebar close
+Project-2-baseline,Project,True,2643.913,1889.904,508.921,33.065,0,0,0,1,titlebar close
+Project-2-progressive,Project,False,2594.576,1843.062,500.641,30.949,0,0,0,1,titlebar close
+Project-3-baseline,Project,True,2577.616,1851.588,491.339,32.411,0,0,0,1,titlebar close
+Project-3-progressive,Project,False,2601.807,1853.583,506.994,36.248,0,0,0,1,titlebar close
+Project-4-baseline,Project,True,2593.132,1844.578,506.381,35.915,0,0,0,1,titlebar close
+Project-4-progressive,Project,False,2607.408,1848.49,502.139,38.652,0,0,0,1,titlebar close
+Project-5-baseline,Project,True,2599.031,1862.962,493.75,33.271,0,0,0,1,titlebar close
+Project-5-progressive,Project,False,2596.211,1853.933,495.306,37.888,0,0,0,1,titlebar close

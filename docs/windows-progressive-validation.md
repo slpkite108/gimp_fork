@@ -5,6 +5,13 @@ Date: 2026-11-12. Tested code: `ef444a24bf1e3bbda1488bebda4a5b29778578a9`.
 The Windows build and focused functional checks passed. This establishes a
 working development build, not release readiness or a cold-start speedup.
 
+**Corrected recheck:** 30 new runs with completed first-run setup measured
+2.584 → 2.436 seconds for empty launch, 3.069 → 2.880 seconds for PNG, and
+2.593 → 2.602 seconds for XCF (eager → progressive medians). The earlier
+20-second delay did not recur. Input-device critical assertions still occurred
+after initialization in both configurations, so stability validation did not
+pass. See [Corrected cached-startup recheck](#corrected-cached-startup-recheck).
+
 **Measurement correction (2026-11-12):** the original 30 startup samples below
 used an unfinished first-run profile. The automation quit GIMP while the welcome
 dialog was still open, preventing startup metadata from being saved. Every run
@@ -97,6 +104,76 @@ Use `-Mode Image -FilePath <copied.png>` or `-Mode Project -FilePath <copied.xcf
 for file-opening checks. Add `-Baseline` to keep eager loading while preserving
 the fork's private profile and `--new-instance` isolation.
 
+## Corrected cached-startup recheck
+
+Completed on 2026-11-12 using the same executable, dependencies, hardware and
+copied fixtures as above. The executable and `gimprc` hashes were identical
+before and after this run. The profile already contained `prev-language` and
+`config-version`, and its welcome dialog was disabled. All 32 observed windows
+(two warm-ups plus 30 measured launches) had no welcome dialog. A separate
+verbose audit after measurement confirmed only three RAW bridge plug-ins were
+queried, not all 140; it was excluded from the timing samples.
+
+One eager and one progressive empty warm-up preceded five alternating
+eager/progressive pairs for each mode. The regular measured runs did not use
+`--verbose`. CPU utilization before the run was 10%; other desktop applications
+remained running. There was no reboot or OS cache flush. `Cold` in the launcher
+and CSV means empty launch, not a verified cold OS cache.
+
+[Corrected raw samples](windows-startup-recheck-samples.csv) retain all 30 runs,
+including the runs with errors. Times are seconds, median [minimum, maximum],
+five runs per cell, for the internal `app_run()` → `initialized` interval.
+
+| Mode | Eager baseline | Progressive flag | Median difference |
+|---|---|---|---|
+| Empty | 2.584 [2.533, 2.612] | 2.436 [2.387, 2.448] | 0.148 s lower (5.7%) |
+| PNG | 3.069 [3.028, 3.133] | 2.880 [2.867, 2.993] | 0.189 s lower (6.2%) |
+| XCF | 2.593 [2.578, 2.644] | 2.602 [2.595, 2.607] | 0.009 s higher; no measurable difference |
+
+Empty and PNG ranges do not overlap in this sample. Exploratory two-sided exact
+Mann–Whitney tests give p = 0.00794 for each, and p = 0.3095 for XCF. These are
+small serial samples, not evidence of release-build or cold-start performance.
+The initialization marker still excludes DLL loading, first paint and input
+responsiveness. The production-performance verdict remains inconclusive.
+
+Initial data-factory median time fell from about 0.50 to 0.19 seconds for empty
+and PNG launches. The shared restore interval still took about 1.85–2.00 seconds;
+the logs show some deferred resources requested during that interval. Finishing
+first-run setup removed the repeated plug-in query cost. The progressive flag
+provided a much smaller additional change in this build.
+
+### Functional observations and error accounting
+
+- All 30 runs reached `initialized` without a logged critical/error before that
+  marker and eventually returned process exit code zero.
+- Every PNG and XCF run exposed the expected filename, dimensions and layer
+  count. The PNG canvas and a two-layer XCF canvas were inspected. This is not
+  a pixel-accurate comparison or validation of complex external resources.
+- Every progressive empty/PNG run completed all five deferred resource groups.
+  XCF emitted no deferred-resource completions, consistent with its eager path.
+- **All 30 measured runs logged critical assertions after initialization.**
+  The CSV calls this `PostInitializationErrors`, which includes subsequent
+  interaction and shutdown; it must not be interpreted as startup errors.
+- Empty-window runs used Ctrl+Q. The first PNG pair also used Ctrl+Q, after which
+  each showed a GIMP Debug dialog and 36 `GDK_IS_DEVICE (device)` critical
+  messages. After dismissing the debug dialogs, clicking the titlebar close
+  button completed those exits. No source image was edited or saved.
+- The remaining PNG and all XCF runs used the titlebar close button. Their logs
+  still contained one input-device save assertion per run. The error counts
+  were identical between the two flags: 50 messages per flag, across 15 runs
+  each. The remaining save assertion is also present in empty-window exits.
+- The change of close method happened after the timed marker, but it limits
+  comparisons of error counts. The root cause of the input-device failures has
+  not been established; neither a clean-shutdown pass nor an attribution to the
+  progressive loader is justified.
+- Existing installed-GIMP profile files (137 files) and both copied fixtures
+  retained their hashes. All test windows were closed after the final audit.
+
+The recheck confirms that the earlier 20-second delay came from the incomplete
+first-run setup and that cache reuse persists. It also confirms unresolved
+input-device failures. Faster internal initialization does not establish a
+stable or release-ready application.
+
 ## Superseded startup measurements
 
 These results are **invalid as a normal cached-startup comparison**. These
@@ -180,11 +257,11 @@ during shutdown. Its cause is unresolved and separate from the startup timing;
 these runs do not establish clean shutdown or release readiness. The normal
 launcher's separate fork profile already contained the required startup metadata.
 
-The earlier test procedure failed to complete first-run setup. A valid new
-comparison must close the welcome dialog, verify both metadata fields, confirm
-cache reuse, then alternate eager/progressive runs in fresh result files. Do
-not reuse or overwrite the superseded samples. First-paint, input latency and
-true OS cold start still require separate measurement.
+The earlier test procedure failed to complete first-run setup. The corrected
+recheck above verified the metadata and cache reuse, then used fresh result
+files for alternating runs. The superseded samples remain intact for audit.
+First-paint, input latency and true OS cold start still require separate
+measurement.
 
 ## Remaining limits and warnings
 
