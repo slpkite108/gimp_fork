@@ -72,6 +72,20 @@ initialization), user-profile migration prevention, Windows identifiers,
 D-Bus identifiers and the guarded launcher. It is **not** a complete Windows
 runtime or distribution-installation test.
 
+On Windows, also run the launcher regression checks:
+
+```powershell
+.\tools\test-progressive-launcher.ps1
+```
+
+These parse the PowerShell launcher and verify it rejects an unrelated
+executable, an executable outside the build tree, missing isolation markers,
+missing Meson metadata, and invalid launch-mode arguments. A tiny GUI executable
+also checks process completion, failure exit codes, filenames containing spaces,
+startup flags and restoration of the caller's environment. It is compiled with
+the Windows .NET Framework compiler; no GIMP installation is needed. Both checks
+run in GitHub Actions.
+
 ## What is not yet isolated
 
 - **Do not run `meson install` into a prefix already containing installed
@@ -88,5 +102,8 @@ runtime or distribution-installation test.
   paths, or explicit changes to GIMP preferences can bypass the isolation.
   Test in disposable directories and with copies of project files.
 
-This is a source-level isolation implementation. **A successfully compiled
-Windows build and side-by-side runtime test have not yet been verified.**
+The Windows build and side-by-side execution with `--new-instance` were verified
+on 2026-11-12. The installed GIMP used a disposable test profile; its existing
+user profile files were unchanged. Default single-instance IPC routing and a
+distributable installer remain unverified. See the
+[Windows validation report](windows-progressive-validation.md) for scope and results.

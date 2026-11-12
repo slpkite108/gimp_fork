@@ -1,6 +1,6 @@
 # GIMP Progressive Startup — experimental implementation
 
-**Status (2026-11-12): code committed, Windows build and runtime behavior NOT verified.** The entire experiment is OFF by default. Keep the original startup behavior as the control.
+**Status (2026-11-12): Windows build, focused regression tests and three GUI launch modes verified.** The full regression matrix and true cold-start performance remain unverified. See the [Windows validation report](windows-progressive-validation.md). The experiment is OFF by default. Keep the original startup behavior as the control.
 
 **Side-by-side safety:** This fork now isolates its user configuration,
 cache/temp directories, Windows instance identity, application ID and
@@ -76,7 +76,7 @@ Test each startup profile independently, with all existing GIMP processes closed
 & "PATH_TO_YOUR_BUILT_GIMP.exe" --no-splash "C:\\test\\example.xcf"
 ```
 
-These are manual examples, not completed test runs. Test with non-critical files in an isolated GIMP user profile. Do not overwrite actual project files before regression tests pass.
+These are generic manual examples. The Windows validation report records the specific fixtures and guarded launcher used for completed runs. Test with non-critical files in an isolated GIMP user profile.
 
 ## Performance profiling
 
@@ -95,7 +95,7 @@ All numbers in this block are **illustrative**. Startup markers report elapsed m
 
 `app_run_enter` is not process creation (DLL loading is excluded). `initialized` is not first-frame rendering or verified interactivity. Add OS-level process tracing and a GUI first-paint/input-responsiveness probe before benchmarking whole cold start.
 
-## Required regression matrix — not executed
+## Full regression matrix — still incomplete
 
 | Scenario | Required behavior |
 |---|---|
@@ -122,7 +122,7 @@ All numbers in this block are **illustrative**. Startup markers report elapsed m
 5. A true user-visible readiness barrier should be tied to first paint and responsiveness, not the `gimp->initialized` assignment.
 6. Restore may perform costly plug-in discovery before the first window; this remains untouched.
 
-## Added production-code regression tests (registered but not yet run)
+## Production-code regression tests
 
 `app/tests/test-startup-loader.c` uses a real nested `.gpl` palette file and the production palette loader:
 
@@ -131,12 +131,12 @@ All numbers in this block are **illustrative**. Startup markers report elapsed m
 
 These tests are registered under `startup-loader` in `app/tests/meson.build`.
 
-Once a compatible GIMP build environment is available:
+Run them in a compatible GIMP build environment:
 
 ```shell
 meson test -C build startup-loader --print-errorlogs
 ```
 
-Adjust `build` to the actual Meson build directory. The tests still need to be executed and any failures fixed. Use an isolated profile and fixture files for Windows/manual UI tests.
+Adjust `build` to the actual Meson build directory. Both cases passed on Windows on 2026-11-12, together with the `core`, `gimpidtable` and `xcf` suites. Use an isolated profile and fixture files for Windows/manual UI tests.
 
-Do not claim a measured speedup or successful Windows build until separately verified. Baseline and experimental results should come from the **same source revision**, build configuration, machine and GIMP profile, differing only in the environment flag.
+A successful Windows build does not establish a measured speedup. Baseline and experimental results should come from the **same source revision**, build configuration, machine and GIMP profile, differing only in the environment flag.
