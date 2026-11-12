@@ -31,7 +31,7 @@ In the deferred path the initial `gimp_data_factory_data_init(..., TRUE)` create
 ### Demand escalation
 
 - `gimp_data_factory_get_data()` promotes a pending factory before returning a named resource.
-- `gimp_data_factory_get_container()` promotes a pending factory once `gimp->initialized` is true; during bootstrap it leaves the placeholder container accessible.
+- `gimp_data_factory_get_container()` promotes a pending factory once factory/tag-cache bootstrap completes (including access from start-up plug-ins). During bootstrap it leaves the placeholder container accessible.
 - `gimp_data_factories_wait()` requests *all* pending factories before waiting for existing async work, preserving project/fully-restored semantics.
 - The main-loop idle queue processes **one resource category per iteration** at `G_PRIORITY_LOW`. A category demanded by a feature is removed from pending and synchronously refreshed.
 - During normal shutdown, unfinished resources are completed before saving resources/tag metadata and before plug-in and module teardown. The idle source is removed before factory destruction.
