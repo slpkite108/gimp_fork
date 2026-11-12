@@ -71,3 +71,17 @@ void              gimp_data_loader_factory_add_loader   (GimpDataFactory        
 void              gimp_data_loader_factory_add_fallback (GimpDataFactory         *factory,
                                                          const gchar             *name,
                                                          GimpDataLoadFunc         load_func);
+
+/* Cooperative, main-context-only file loading, intended for the initial
+ * population of deferred resource factories. One directory entry or file
+ * is processed per step. A direct resource request can drain the same
+ * loader synchronously via repeated steps.
+ */
+void              gimp_data_loader_factory_incremental_begin
+                                                        (GimpDataFactory         *factory);
+gboolean          gimp_data_loader_factory_incremental_step
+                                                        (GimpDataFactory         *factory,
+                                                         GimpContext             *context);
+void              gimp_data_loader_factory_incremental_cancel
+                                                        (GimpDataFactory         *factory);
+
