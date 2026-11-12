@@ -31,7 +31,10 @@ In the deferred path the initial `gimp_data_factory_data_init(..., TRUE)` create
 ### Demand escalation
 
 - `gimp_data_factory_get_data()` promotes a pending factory before returning a named resource.
-- `gimp_data_factory_get_container()` promotes a pending factory once factory/tag-cache bootstrap completes (including access from start-up plug-ins). During bootstrap it leaves the placeholder container accessible.
+- Generic `gimp_data_factory_get_container()` **does not promote** a resource: internal GimpContext construction queries all factory containers and would otherwise defeat all deferral.
+- `gimp_data_factory_view_new()` explicitly promotes a factory when an actual resource dock is requested.
+- A change to the active **user context tool** promotes MyPaint brushes, gradients, or patterns where relevant; internal tool-options contexts do not count as user requests.
+- Additional consumers can call `gimp_data_factories_startup_require_container()` once bootstrap completes to request a fully populated factory explicitly.
 - `gimp_data_factories_wait()` requests *all* pending factories before waiting for existing async work, preserving project/fully-restored semantics.
 - The main-loop idle queue processes **one resource category per iteration** at `G_PRIORITY_LOW`. A category demanded by a feature is removed from pending and synchronously refreshed.
 - During normal shutdown, unfinished resources are completed before saving resources/tag metadata and before plug-in and module teardown. The idle source is removed before factory destruction.
@@ -94,7 +97,7 @@ All numbers in this block are **illustrative**. Startup markers report elapsed m
 | XCF with text and custom brushes/gradients/patterns | Correct restored rendering, resource references and fonts |
 | Unknown extension, mixed PNG+XCF | Conservative PROJECT path |
 | Open XCF from UI while deferred | Fully materialize dependencies before file parsing |
-| Select palette/gradient/MyPaint/tool preset before auto-load | User request promotes factory once, no duplicate registration |
+| Open corresponding resource dock or select gradient/MyPaint/pattern tool before auto-load | User request promotes factory once, no duplicate registration |
 | Feature request during a different factory load | Eventual promotion when main-loop control returns (not mid-call preemption) |
 | Quit immediately while resources pending | All resource state and tags safely written; no dangling idle source |
 | Change resource path during deferred load | Correct refresh semantics, no duplicates |
@@ -104,7 +107,7 @@ All numbers in this block are **illustrative**. Startup markers report elapsed m
 
 ## Known risks and next iteration
 
-1. Some plug-in and UI consumers may cache factory containers before resources are populated. Validate the change-notification behavior for dockables and extension-provided resources.
+1. Some plug-in and UI consumers may cache factory containers before resources are populated. Container access alone is not promoted, because internal context creation references every category. Audit genuine consumers and add explicit demand hooks where required; validate change notifications for dockables and extension-provided resources.
 2. The deferred category may still be a large, blocking directory traversal. Break directory enumeration and parsing into cooperatively scheduled units (or split I/O and main-thread object creation) to allow true action priority changes.
 3. Direct `get_container()` calls after initialization may cause eager promotion even when merely querying metadata; trace these accesses to reduce unnecessary blocking.
 4. Project detection should eventually use MIME sniffing / GIMP file handler information, while retaining a safe fallback for unknown formats.
