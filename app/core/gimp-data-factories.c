@@ -267,6 +267,14 @@ gimp_startup_load_resource (GimpStartupState    *state,
       state->pending[resource] = FALSE;
       gimp_data_factory_data_clean (factory);
 
+      /* Existing context handlers use the container's "thaw" signal
+       * to resolve stored names (saved brush/palette/pattern presets).
+       * During cooperative enumeration objects are added individually,
+       * so dispatch a final thaw notification when a category completes.
+       */
+      gimp_container_freeze (gimp_data_factory_get_container (factory));
+      gimp_container_thaw (gimp_data_factory_get_container (factory));
+
       if (g_strcmp0 (g_getenv ("GIMP_STARTUP_PROFILE"), "1") == 0)
         g_printerr ("GIMP_PROGRESSIVE_STARTUP,resource,%s,%s,%" G_GUINT64_FORMAT
                     ",%" G_GINT64_FORMAT "\n",
