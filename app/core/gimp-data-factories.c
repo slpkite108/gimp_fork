@@ -96,6 +96,9 @@ typedef struct
   GimpDataFactory     *factories[GIMP_STARTUP_N_RESOURCES];
   gboolean             pending[GIMP_STARTUP_N_RESOURCES];
   gboolean             loading[GIMP_STARTUP_N_RESOURCES];
+  gboolean             started[GIMP_STARTUP_N_RESOURCES];
+  guint64              steps[GIMP_STARTUP_N_RESOURCES];
+  gint64               load_time_us[GIMP_STARTUP_N_RESOURCES];
   gboolean             bootstrap_complete;
   guint                idle_id;
 } GimpStartupState;
@@ -111,9 +114,15 @@ static void
 gimp_startup_state_free (gpointer data)
 {
   GimpStartupState *state = data;
+  guint             i;
 
   if (state->idle_id)
     g_source_remove (state->idle_id);
+
+  /* A cancelled idle source must not leave directory enumerators open. */
+  for (i = 0; i < GIMP_STARTUP_N_RESOURCES; i++)
+    if (state->started[i])
+      gimp_data_loader_factory_incremental_cancel (state->factories[i]);
 
   g_free (state);
 }
@@ -207,35 +216,65 @@ gimp_data_factories_startup_prepare (Gimp          *gimp,
                 state->mode == GIMP_STARTUP_IMAGE ? "image" : "project");
 }
 
+/* Background loading advances one directory entry/file per GTK idle
+ * callback. A real consumer upgrades *its* factory to a synchronous
+ * require barrier, draining remaining file steps immediately. This lets
+ * input processing preempt automatic loading BETWEEN file operations.
+ *
+ * A single slow file decoder is not safely interruptible, because the
+ * underlying resource parser is synchronous and not thread-safe.
+ */
 static void
 gimp_startup_load_resource (GimpStartupState    *state,
                             GimpStartupResource  resource,
-                            const gchar         *reason)
+                            const gchar         *reason,
+                            gboolean             drain)
 {
   GimpDataFactory *factory;
-  gint64           start;
+  gboolean         more;
+  gint64           started_us;
 
   if (! state->pending[resource] || state->loading[resource])
     return;
 
-  /* Mark no longer pending before refresh: factory data loading can emit
-   * "add" and "notify" signals which recursively request its container.
-   */
-  state->pending[resource] = FALSE;
-  state->loading[resource] = TRUE;
   factory = state->factories[resource];
-  start = g_get_monotonic_time ();
+  state->loading[resource] = TRUE;
 
-  gimp_data_factory_data_refresh (factory,
-                                  gimp_get_user_context (state->gimp));
-  gimp_data_factory_data_clean (factory);
+  if (! state->started[resource])
+    {
+      gimp_data_loader_factory_incremental_begin (factory);
+      state->started[resource] = TRUE;
+    }
+
+  do
+    {
+      started_us = g_get_monotonic_time ();
+
+      more = gimp_data_loader_factory_incremental_step
+               (factory, gimp_get_user_context (state->gimp));
+
+      state->steps[resource]++;
+      state->load_time_us[resource] += g_get_monotonic_time () - started_us;
+    }
+  while (drain && more && state->pending[resource]);
+
+  if (! more || ! state->pending[resource])
+    {
+      if (state->started[resource])
+        gimp_data_loader_factory_incremental_cancel (factory);
+
+      state->started[resource] = FALSE;
+      state->pending[resource] = FALSE;
+      gimp_data_factory_data_clean (factory);
+
+      if (g_strcmp0 (g_getenv ("GIMP_STARTUP_PROFILE"), "1") == 0)
+        g_printerr ("GIMP_PROGRESSIVE_STARTUP,resource,%s,%s,%" G_GUINT64_FORMAT
+                    ",%" G_GINT64_FORMAT "\n",
+                    gimp_object_get_name (GIMP_OBJECT (factory)),
+                    reason, state->steps[resource], state->load_time_us[resource]);
+    }
 
   state->loading[resource] = FALSE;
-
-  if (g_strcmp0 (g_getenv ("GIMP_STARTUP_PROFILE"), "1") == 0)
-    g_printerr ("GIMP_PROGRESSIVE_STARTUP,resource,%s,%s,%" G_GINT64_FORMAT "\n",
-                gimp_object_get_name (GIMP_OBJECT (factory)),
-                reason, g_get_monotonic_time () - start);
 }
 
 static gboolean
@@ -261,7 +300,7 @@ gimp_startup_load_idle (gpointer data)
     {
       if (state->pending[order[i]])
         {
-          gimp_startup_load_resource (state, order[i], "background");
+          gimp_startup_load_resource (state, order[i], "background", FALSE);
           return G_SOURCE_CONTINUE;
         }
     }
@@ -304,7 +343,7 @@ gimp_data_factories_startup_require_factory (Gimp            *gimp,
       if (state->factories[i] == factory)
         {
           if (state->pending[i])
-            gimp_startup_load_resource (state, i, "user-request");
+            gimp_startup_load_resource (state, i, "user-request", TRUE);
 
           return;
         }
@@ -349,7 +388,36 @@ gimp_data_factories_startup_require_all (Gimp *gimp)
 
   for (i = 0; i < GIMP_STARTUP_N_RESOURCES; i++)
     if (state->pending[i])
-      gimp_startup_load_resource (state, i, "require-all");
+      gimp_startup_load_resource (state, i, "require-all", TRUE);
+}
+
+/* An explicit full factory refresh (including path changes) supersedes
+ * the deferred initial discovery. The regular factory refresh will cancel
+ * the incremental loader, rebuild the container and preserve cached data.
+ */
+void
+gimp_data_factories_startup_note_full_refresh (Gimp            *gimp,
+                                               GimpDataFactory *factory)
+{
+  GimpStartupState *state;
+  guint             i;
+
+  g_return_if_fail (GIMP_IS_GIMP (gimp));
+
+  state = gimp_startup_get_state (gimp);
+  if (! state)
+    return;
+
+  for (i = 0; i < GIMP_STARTUP_N_RESOURCES; i++)
+    if (state->factories[i] == factory)
+      {
+        state->pending[i] = FALSE;
+        /* The loader's regular refresh path cancels any open enumerators.
+         * Do not close them here while a decoder might be active.
+         */
+        state->started[i] = FALSE;
+        return;
+      }
 }
 
 void
