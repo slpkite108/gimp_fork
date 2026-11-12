@@ -45,6 +45,9 @@ void      gimp_data_factories_startup_begin_background
 void      gimp_data_factories_startup_require_factory
                                           (Gimp               *gimp,
                                            GimpDataFactory    *factory);
+void      gimp_data_factories_startup_require_container
+                                          (Gimp               *gimp,
+                                           GimpDataFactory    *factory);
 void      gimp_data_factories_startup_require_all
                                           (Gimp               *gimp);
 void      gimp_data_factories_startup_clear
